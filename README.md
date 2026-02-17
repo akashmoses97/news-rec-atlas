@@ -1,17 +1,17 @@
 # NewsRecAtlas
-A Structural and Modeling Study of Large-Scale News Recommendation Systems
+A Structural and Modeling Study of Large-Scale News Recommendation Systems using MIND Dataset
 
 ---
 
 ## About This Project
 
 **NewsRecAtlas** is a semester-long project developed as part of  
-**[Course Name] – [Course Code]**  
-at **[University Name]**.
+**CSCE-676 – Data Mining & Analysis**  
+at **Texas A&M University - College Station**.
 
-The project investigates the structural, behavioral, and bias-related properties of large-scale recommendation systems using the MIND (Microsoft News Dataset). It progresses from rigorous exploratory data analysis to advanced modeling techniques, including sequential and LLM-based methods.
+The project investigates the structural, behavioral, and bias-related properties of large-scale recommendation systems using the MIND (Microsoft News Dataset). It progresses from rigorous exploratory data analysis to advanced modeling techniques.
 
-This repository documents the evolution of the project as the course progresses and serves as a professional portfolio artifact.
+This repository documents the evolution of the project as the course progresses and covers techniques specified through and beyond the course.
 
 ---
 
@@ -31,54 +31,97 @@ NewsRecAtlas aims to map and analyze these structural dynamics before extending 
 
 ---
 
-## Dataset
+## Setup and Reproducibility
 
-**MIND-small (Microsoft News Dataset)**
+### Clone the Repository
 
-- 156,965 impressions  
-- 50,000 users  
-- 51,282 news articles  
-- Implicit click feedback  
+```bash
+git clone https://github.com/your-username/news-rec-atlas.git  
+cd news-rec-atlas
+```
+---
 
-Files used:
-- `behaviors.tsv` — User impression logs
-- `news.tsv` — Article metadata (category, title, abstract)
+### Environment Requirements
 
-MIND-small preserves the schema of MIND-large while remaining computationally feasible for iterative experimentation.
+Developed using:
+
+- Python 3.9+
+- pandas
+- numpy
+- matplotlib
+- seaborn
+- Jupyter Notebook
+
+Install dependencies:
+
+```bash
+pip install pandas numpy matplotlib seaborn
+```
+---
+
+### Dataset Download
+
+Download MIND-small from:
+
+https://msnews.github.io/
+
+After downloading:
+
+1. Extract the folder `MINDsmall_train`
+2. Place it in the root directory
+
+Expected structure:
+
+```bash
+news-rec-atlas/  
+│  
+├── MINDsmall_train/  
+│   ├── behaviors.tsv  
+│   └── news.tsv  
+│  
+├── notebooks/  
+│   └── 01_data_selection_setup_and_eda.ipynb  
+│  
+└── README.md  
+```
+The notebook assumes:
+
+```bash
+MINDsmall_train/behaviors.tsv  
+MINDsmall_train/news.tsv  
+```
+
+---
+
+### Running the Notebook
+
+Open:
+
+```bash
+notebooks/01_data_selection_setup_and_eda.ipynb
+```
+
+Run all cells from top to bottom.
 
 ---
 
 ## Phase 1 — Exploratory Data Analysis (Completed)
 
-### Structural Findings
+Phase 1 examined:
 
-- **Interaction sparsity:** 0.999908  
-- **Co-occurrence sparsity:** 0.993806  
-- **Click ratio:** 4.04%  
-- **Cold-start users:** 32.77%  
-- **Mean candidates per impression:** 37.23  
+- Interaction sparsity and co-occurrence sparsity  
+- Click imbalance and long-tail popularity  
+- Cold-start prevalence  
+- Exposure bias  
+- Temporal interaction patterns  
+- Correlation between user behavioral features  
 
-### Observed Patterns
+Validation tests were implemented to ensure structural integrity and parsing correctness.
 
-- Strong long-tail popularity distribution  
-- Significant exposure (position) bias  
-- Temporal burstiness in user interactions  
-- Positive correlation between activity and browsing history depth  
-
-### Validation
-
-Non-trivial structural validation tests confirm:
-
-- Impression integrity  
-- Referential consistency  
-- Timestamp monotonicity  
-- Expected sparsity levels  
-
-The EDA establishes a robust structural foundation for modeling decisions.
+The EDA revealed extreme sparsity, strong imbalance, and bursty engagement behavior — all of which influence modeling choices.
 
 ---
-
-## Research Direction
+## Future Work & Research Direction
 
 ### Course-Aligned Techniques
 - Frequent itemset and co-occurrence analysis  
@@ -88,39 +131,27 @@ The EDA establishes a robust structural foundation for modeling decisions.
 ### Beyond-Course Extensions
 - Sequential recommendation models  
 - Popularity-aware and bias-aware ranking strategies  
-
-### LLM-Based Extension
-- Transformer-based embeddings of news titles/abstracts  
+- LLM Transformer-based embeddings of news titles/abstracts  
 - Content-aware modeling for cold-start mitigation  
 
----
-
-## Key Research Questions
-
-1. How does extreme sparsity affect traditional collaborative filtering?
-2. Do sequential models capture bursty behavior better than static models?
-3. How does popularity bias influence ranking diversity?
-4. Can semantic embeddings improve cold-start performance?
-
----
-
-## Assumptions and Constraints
-
-- Click labels approximate user preference (implicit feedback).
-- Impression candidate sets reflect outputs of a pre-existing ranking system.
-- MIND-small is structurally representative of MIND-large.
+Further Research questions present in `01_data_selection_setup_and_eda.ipynb`
 
 ---
 
 ## Repository Structure
 
-notebooks/
-01_data_setup_and_eda.ipynb
+```bash
+news-rec-atlas/  
+├── notebooks/  
+│   └── 01_data_selection_setup_and_eda.ipynb  
+│  
+├── README.md  
+│ 
+└── .gitignore  
+```
 
-README.md
 
-
-Future additions:
+Potential Future additions:
 - Graph modeling experiments  
 - Sequential recommendation implementations  
 - LLM-based embedding experiments  
@@ -134,20 +165,31 @@ Future additions:
 - Pandas
 - NumPy
 - Seaborn / Matplotlib
-- (Planned) PyTorch / Transformers
+
+---
+## Assumptions and Constraints
+
+- Click labels approximate user preference (implicit feedback).
+- Impression candidate sets reflect outputs of a pre-existing ranking system.
+- MIND-small is structurally representative of MIND-large.
 
 ---
 
 ## Project Status
 
-✔ Exploratory Data Analysis Completed  
-⏳ Baseline Modeling – In Progress  
-🔜 Sequential & LLM Extensions – Planned  
+- Exploratory Data Analysis - Completed  
+- Baseline Modeling – Future Work
+- Data Mining Techniques implementation (Course) - Future Work
+- Data Mining Techniques implementation (External) - Future Work
+- Research Potential - Future Work
 
 ---
 
 ## Author
 
-[Your Name]  
-[Program Name], [University Name]  
-[Course Name – Course Code]
+
+Akash Moses Guttedar<br>
+UIN - 535005841<br>
+amg_1597@tamu.edu<br>
+Dept. of Electrical & Computer Engineering<br>
+Texas A&M University - College Station 
