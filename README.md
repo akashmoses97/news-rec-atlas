@@ -13,6 +13,10 @@ The project investigates the structural, behavioral, and bias-related properties
 
 This repository documents the evolution of the project as the course progresses and covers techniques specified through and beyond the course.
 
+This project progresses through multiple stages:
+- Checkpoint-1: Exploratory Data Analysis (EDA)
+- Checkpoint-2: Research Question Formation and Method Planning
+
 ---
 
 ## Motivation
@@ -174,10 +178,46 @@ Potential Future additions:
 - MIND-small is structurally representative of MIND-large.
 
 ---
+## Research Question Formation (Checkpoint-2)
+
+Building on the exploratory analysis from Checkpoint-1, this stage focuses on defining clear and actionable research questions aligned with both course techniques and external methods.
+
+### Research Questions
+
+1. **RQ1 (Frequent Pattern Mining):**  
+   Can co-occurrence patterns from frequent itemsets improve news recommendation relevance?
+
+2. **RQ2 (Graph Mining):**  
+   Can graph-based relationships between news articles improve recommendation quality over simple co-occurrence?
+
+3. **RQ3 (Text Mining + External Method):**  
+   Can latent topic representations (LDA) improve recommendations compared to basic text features?
+
+---
+
+### Methodological Approach
+
+- **Course Techniques:**  
+  - FP-Growth (frequent itemsets)  
+  - Graph-based feature extraction  
+  - TF-IDF (text mining)  
+
+- **External Techniques:**  
+  - LDA (topic modeling)  
+  - Logistic Regression (learning-to-rank)  
+
+---
+
+### Notebook
+
+The full implementation for this stage is available in:
+
+- `notebooks\02_research_question_formation.ipynb`
 
 ## Project Status
 
-- Exploratory Data Analysis - Completed  
+- Exploratory Data Analysis - Completed 
+- Research Question Formation - Completed
 - Baseline Modeling – Future Work
 - Data Mining Techniques implementation (Course) - Future Work
 - Data Mining Techniques implementation (External) - Future Work
