@@ -48,11 +48,14 @@ def chronological_split(
 
 
 def cold_start_mask(df: pd.DataFrame) -> pd.Series:
+    """Boolean mask: True for cold-start users (single-impression users).
+    Matches CP1 EDA definition: ~32.77% of users appear only once.
+    Uses is_cold_start flag if pre-computed, otherwise falls back to history_len == 0.
     """
-    Boolean mask: True where history_len == 0 (zero-history users).
-    """
+    if "is_cold_start" in df.columns:
+        return df["is_cold_start"].astype(bool)
     if "history_len" not in df.columns:
-        raise ValueError("df must have a 'history_len' column")
+        raise ValueError("df must have 'is_cold_start' or 'history_len' column")
     return df["history_len"] == 0
 
 
