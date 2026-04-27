@@ -116,18 +116,45 @@ def setup_mind_data(
 
 def _extract_zip(zip_path: str, extract_dir: str) -> None:
     """
-    Validate and extract a MIND-small zip; 
-    verify required files appear.
+        Validate and extract a MIND-small zip; verify required files appear.
     """
     if not zipfile.is_zipfile(zip_path):
         raise ValueError(f"{zip_path!r} is not a valid ZIP archive.")
-    # MIND zips extract files at the archive root, so we extract into extract_dir
+
     os.makedirs(extract_dir, exist_ok=True)
+
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(extract_dir)
+        names = zf.namelist()
+        # Detect leading subfolder prefix by finding behaviors.tsv in the archive
+        prefix = ""
+        for n in names:
+            if n.endswith("behaviors.tsv"):
+                prefix = n[: -len("behaviors.tsv")]  # e.g. "MINDsmall_train/"
+                break
+
+        if prefix:
+            # Layout B: strip leading subfolder, extract flat into extract_dir
+            for member in zf.infolist():
+                if member.filename == prefix:
+                    continue
+                relative = member.filename[len(prefix):]
+                if not relative:
+                    continue
+                target = os.path.join(extract_dir, relative)
+                if member.is_dir():
+                    os.makedirs(target, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with zf.open(member) as src, open(target, "wb") as dst:
+                        dst.write(src.read())
+        else:
+            # Layout A: files already at archive root
+            zf.extractall(extract_dir)
+
     if not _has_required_files(extract_dir):
         raise FileNotFoundError(
-            f"Extraction completed but required files are missing in {extract_dir!r}."
+            f"Extraction completed but behaviors.tsv / news.tsv are missing "
+            f"in {extract_dir!r}. Zip contents: {names[:10]}"
         )
     print(f"Extraction complete. Files available in: {extract_dir}")
 
