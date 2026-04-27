@@ -116,7 +116,7 @@ def merge_features(
     """
     base_cols = [
         "impression_id", "candidate_id", "user_id",
-        "history_len", "label", "position",
+        "history_len", "label", "position", "is_cold_start",
     ]
     merged = long_df[base_cols].copy()
     for f in feature_dfs:
@@ -197,7 +197,13 @@ def evaluate(
 
     full_stats = _eval_slice(val_scored, val_scored["_score"].values)
 
-    cold_df = val_scored[val_scored["history_len"] == 0]
+    # Use is_cold_start flag if present (single-visit users ~33%),
+    # fall back to history_len == 0 if not.
+    if "is_cold_start" in val_scored.columns:
+        cold_df = val_scored[val_scored["is_cold_start"]]
+    else:
+        cold_df = val_scored[val_scored["history_len"] == 0]
+
     cold_stats = (
         _eval_slice(cold_df, cold_df["_score"].values)
         if len(cold_df) > 0

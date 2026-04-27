@@ -63,7 +63,8 @@ def describe_split(train_df: pd.DataFrame, val_df: pd.DataFrame) -> pd.DataFrame
     """
     Tiny summary table for the notebook's setup section."""
     def stats(d, name):
-        cold = cold_start_mask(d).sum()
+        cold = d['is_cold_start'].sum() if 'is_cold_start' in d.columns \
+           else cold_start_mask(d).sum()
         return {
             "split": name,
             "impressions": len(d),

@@ -253,18 +253,24 @@ def explode_impressions(behaviors: pd.DataFrame) -> pd.DataFrame:
       candidate_id, label, position
     """
     rows = []
-    for rec in behaviors[
-        ["impression_id", "user_id", "time", "history", "history_len", "impressions"]
-    ].itertuples(index=False):
+    has_cold_flag = "is_cold_start" in behaviors.columns
+    cols = ["impression_id", "user_id", "time", "history", "history_len", "impressions"]
+    if has_cold_flag:
+        cols.append("is_cold_start")
+
+    for rec in behaviors[cols].itertuples(index=False):
         for pos, (nid, label) in enumerate(parse_impressions(rec.impressions)):
-            rows.append({
+            row = {
                 "impression_id": rec.impression_id,
-                "user_id": rec.user_id,
-                "time": rec.time,
-                "history": rec.history,
-                "history_len": rec.history_len,
-                "candidate_id": nid,
-                "label": label,
-                "position": pos,
-            })
+                "user_id":       rec.user_id,
+                "time":          rec.time,
+                "history":       rec.history,
+                "history_len":   rec.history_len,
+                "candidate_id":  nid,
+                "label":         label,
+                "position":      pos,
+            }
+            if has_cold_flag:
+                row["is_cold_start"] = rec.is_cold_start
+            rows.append(row)
     return pd.DataFrame(rows)
