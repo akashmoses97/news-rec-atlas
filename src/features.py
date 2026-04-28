@@ -106,72 +106,123 @@ def build_cooccurrence_features(
     min_support_count: int = 50,
     top_k_items: int = 300,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    For each (impression, candidate), count how many of the user's history
-    items co-occur with the candidate in a frequent pair (above min_support_count).
+    """Co-occurrence features via frequent pair counting (counter-based, no mlxtend).
 
-    Cold-start users (empty history) get cooc_score = 0.
+    WHY counter-based: mlxtend FP-Growth materialises a dense boolean matrix
+    (n_baskets x n_items) that exhausts Colab RAM on full MIND-small.
+    Counter-based pair counting is mathematically identical for length-2 itemsets
+    (all we use) and runs in ~2 min instead of hanging.
 
-    Parameters
-    ----------
-    top_k_items : int
-        Before running FP-Growth, restrict to the top-K most frequent candidate
-        items in training impressions. Mirrors the CP2 feasibility check (Top-300)
-        which validated computational tractability at this threshold.
-        WHY: FP-Growth on all ~30K unique items would materialise a dense
-        (n_baskets x n_items) boolean matrix that exhausts Colab RAM.
+    WHY top_k_items: restricts baskets to Top-300 most frequent items,
+    consistent with CP2 feasibility check which validated this threshold.
 
     Returns two DataFrames with columns:
         impression_id, candidate_id, cooc_score, cooc_max, cooc_hist_len
     """
-    # Step 1: identify top-K items (CP2 feasibility: Top-300)
-    # WHY: reduces FP-Growth dimensionality while keeping the most signal-rich items
+    from collections import Counter as _Counter
+    from itertools import combinations as _comb
+
+    # Step 1: top-K items by frequency
     item_freq = train_long["candidate_id"].value_counts()
     top_k_set = set(item_freq.head(top_k_items).index.tolist())
 
-    # Step 2: build baskets filtered to top-K items
-    # WHY: consistent with CP2 Cell 22 which filters before TransactionEncoder
+    # Step 2: build baskets (top-K filtered, deduplicated)
     baskets = (
         train_long[train_long["candidate_id"].isin(top_k_set)]
         .groupby("impression_id")["candidate_id"]
-        .apply(lambda x: list(set(x)))   # deduplicate within basket
+        .apply(lambda x: list(set(x)))
         .tolist()
     )
-    baskets = [b for b in baskets if len(b) >= 2]  # FP-Growth needs ≥2 items
 
-    pair_support = _fpgrowth_pair_supports(baskets, min_support_count)
+    # Step 3: count frequent pairs — counter-based (no mlxtend)
+    pair_counts: _Counter = _Counter()
+    for b in baskets:
+        if len(b) >= 2:
+            pair_counts.update(_comb(b, 2))
 
-    # Index for fast lookup
+    # Step 4: filter by min_support_count
+    pair_support = {k: v for k, v in pair_counts.items() if v >= min_support_count}
+    print(f"  Frequent pairs found: {len(pair_support):,} "
+          f"(min_support={min_support_count})")
+
+    # Step 5: build lookup dict for fast scoring
     pair_lookup: Dict[str, Dict[str, int]] = defaultdict(dict)
     for (a, b), s in pair_support.items():
         pair_lookup[a][b] = s
         pair_lookup[b][a] = s
 
-    def _score(df):
-        out = df[["impression_id", "candidate_id", "history"]].copy()
-        scores = np.zeros(len(out))
-        maxes = np.zeros(len(out))
-        hist_lens = np.zeros(len(out), dtype=int)
+    # Step 6: merge-based scoring — no Python row loop
+    # WHY: merge on impression_id is O(n log n), not O(n * history_len).
+    # Approach: join pair_lookup scores onto (impression_id, candidate_id) via
+    # the impression's history items.
+    def _score(df: pd.DataFrame) -> pd.DataFrame:
+        # One history string per impression
+        imp_history = (
+            df.groupby("impression_id")["history"]
+            .first()
+            .reset_index()
+        )
+        imp_history["hist_items"] = imp_history["history"].apply(
+            lambda h: h.split() if isinstance(h, str) and h else []
+        )
+        imp_history["hist_len"] = imp_history["hist_items"].str.len()
 
-        for i, (cand, hist) in enumerate(zip(out["candidate_id"], out["history"])):
-            hist_items = hist.split() if isinstance(hist, str) and hist else []
-            hist_lens[i] = len(hist_items)
-            if not hist_items:
-                continue
-            sup_map = pair_lookup.get(cand, {})
-            if not sup_map:
-                continue
-            sups = [sup_map.get(h, 0) for h in hist_items]
-            scores[i] = float(sum(sups))
-            maxes[i] = float(max(sups)) if sups else 0.0
+        # Explode history so each (impression_id, hist_item) is one row
+        imp_hist_long = imp_history[["impression_id", "hist_items", "hist_len"]].copy()
+        imp_hist_long = imp_hist_long.explode("hist_items").rename(
+            columns={"hist_items": "hist_item"}
+        )
+        imp_hist_long = imp_hist_long.dropna(subset=["hist_item"])
 
-        out = out.drop(columns=["history"])
-        out["cooc_score"] = scores
-        out["cooc_max"] = maxes
-        out["cooc_hist_len"] = hist_lens
+        # Build pair score lookup as a DataFrame for merging
+        if pair_support:
+            pair_rows = [
+                {"item_a": a, "item_b": b, "support": s}
+                for (a, b), s in pair_support.items()
+            ]
+            pair_df = pd.DataFrame(pair_rows)
+            # Both directions
+            pair_df_rev = pair_df.rename(columns={"item_a": "item_b", "item_b": "item_a"})
+            pair_df_full = pd.concat([pair_df, pair_df_rev], ignore_index=True)
+        else:
+            pair_df_full = pd.DataFrame(columns=["item_a", "item_b", "support"])
+
+        # candidates per impression
+        cand_df = df[["impression_id", "candidate_id"]].copy()
+
+        # Join: cand_df -> hist_items -> pair scores
+        # (impression_id, candidate_id) x (impression_id, hist_item) -> pair score
+        joined = cand_df.merge(imp_hist_long, on="impression_id", how="left")
+        joined = joined.merge(
+            pair_df_full.rename(columns={"item_a": "candidate_id", "item_b": "hist_item"}),
+            on=["candidate_id", "hist_item"],
+            how="left",
+        )
+        joined["support"] = joined["support"].fillna(0)
+
+        # Aggregate per (impression_id, candidate_id)
+        agg = (
+            joined.groupby(["impression_id", "candidate_id"])["support"]
+            .agg(cooc_score="sum", cooc_max="max")
+            .reset_index()
+        )
+
+        # Attach hist_len
+        hist_len_map = imp_history.set_index("impression_id")["hist_len"]
+        agg["cooc_hist_len"] = agg["impression_id"].map(hist_len_map).fillna(0).astype(int)
+
+        # Left join back to preserve original row order
+        out = df[["impression_id", "candidate_id"]].merge(agg, on=["impression_id", "candidate_id"], how="left")
+        out[["cooc_score", "cooc_max", "cooc_hist_len"]] = (
+            out[["cooc_score", "cooc_max", "cooc_hist_len"]].fillna(0)
+        )
         return out
 
-    return _score(train_long), _score(val_long)
+    print("  Scoring training rows...")
+    train_feats = _score(train_long)
+    print("  Scoring validation rows...")
+    val_feats   = _score(val_long)
+    return train_feats, val_feats
 
 
 # ---------------------------------------------------------------------
@@ -182,7 +233,7 @@ def build_graph_features(
     train_long: pd.DataFrame,
     val_long: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Building a co-click graph: edge weight = number of users who clicked both.
+    """Build a co-click graph: edge weight = number of users who clicked both.
     Compute, per (impression, candidate):
         graph_degree         : weighted degree of candidate in the graph
         graph_hist_overlap   : number of history items that are graph neighbors of candidate
@@ -258,8 +309,7 @@ def build_content_features(
     max_features: int = 5000,
     random_state: int = 42,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
-    """
-    TF-IDF + LDA over news titles + abstracts.
+    """TF-IDF + LDA over news titles + abstracts.
 
     Per-candidate features:
         topic_entropy         : entropy of the topic distribution (per article)
@@ -393,8 +443,7 @@ def build_content_features(
 
 
 def top_words_per_topic(artifacts: Dict, n_words: int = 8) -> pd.DataFrame:
-    """
-    Pretty-print top words per LDA topic for the interpretability cell.
+    """Pretty-print top words per LDA topic for the interpretability cell.
 
     Uses the count_vectorizer vocabulary (the one LDA was trained on),
     not the tfidf_vectorizer — they share the same vocab by construction
