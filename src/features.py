@@ -1,14 +1,14 @@
 """
 features.py
 -----------
-Building the four feature families compared in the notebook:
+Build the four feature families compared in the notebook:
 
   build_popularity_features(...)    Floor   — popularity of the candidate in train
   build_cooccurrence_features(...)  Current — FP-Growth frequent itemsets (Sub-Q A)
   build_graph_features(...)         Current — co-click graph (Sub-Q B)
   build_content_features(...)       Proposed — TF-IDF + LDA topic distributions (Sub-Q C)
 
-All builders take the long-format DataFrames produced by
+All builders take the *long-format* DataFrames produced by
 data_loader.explode_impressions() and return a DataFrame keyed on
 (impression_id, candidate_id) so feature sets can be merged cleanly.
 
@@ -391,41 +391,96 @@ def build_content_features(
         return topic_dist[i]
 
     def _score(df: pd.DataFrame) -> pd.DataFrame:
-        out = df[["impression_id", "candidate_id", "history"]].copy()
-        n = len(out)
-        ent       = np.zeros(n)
-        tmax      = np.zeros(n)
-        topic_sim = np.zeros(n)
-        tfidf_sim = np.zeros(n)
+        # ----------------------------------------------------------------
+        # Vectorised scoring — impression-level, not row-level
+        # WHY: pure Python loop over 4.5M rows with per-row cosine_similarity
+        # takes 30-60 min on full MIND-small. Instead:
+        #   1. Compute article-side features (topic_entropy, topic_max)
+        #      via direct index lookup — O(n_articles), instant.
+        #   2. Compute history similarity per IMPRESSION (not per row):
+        #      there are ~125K impressions vs 4.5M rows — 36x fewer units.
+        #      For each impression, compute candidate vs history similarity
+        #      once, then broadcast to all candidate rows of that impression.
+        # ----------------------------------------------------------------
 
-        for i, (cand, hist) in enumerate(zip(out["candidate_id"], out["history"])):
-            cand_idx = news_idx.get(cand)
-            if cand_idx is not None:
-                ent[i]  = topic_entropy_arr[cand_idx]
-                tmax[i] = topic_max_arr[cand_idx]
+        # Step 1: article-side features via vectorised index lookup
+        cand_indices = df["candidate_id"].map(news_idx)
+        valid = cand_indices.notna()
 
-            # History-dependent features: 0 for cold-start (hist empty)
-            hist_items = hist.split() if isinstance(hist, str) and hist else []
-            if not hist_items or cand_idx is None:
+        ent  = np.zeros(len(df))
+        tmax = np.zeros(len(df))
+        valid_idx = cand_indices[valid].astype(int).values
+        ent[valid.values]  = topic_entropy_arr[valid_idx]
+        tmax[valid.values] = topic_max_arr[valid_idx]
+
+        # Step 2: history similarity — computed per impression
+        # Parse history once per impression
+        imp_history = (
+            df.groupby("impression_id")["history"]
+            .first()
+            .reset_index()
+        )
+        imp_history["hist_items"] = imp_history["history"].apply(
+            lambda h: h.split() if isinstance(h, str) and h else []
+        )
+
+        # Pre-build topic and tfidf matrices for all unique article IDs
+        # (candidate + history) to avoid repeated lookups
+        all_ids = np.unique(
+            df["candidate_id"].tolist() +
+            [h for hlist in imp_history["hist_items"] for h in hlist]
+        )
+        id_to_row = {nid: news_idx[nid] for nid in all_ids if nid in news_idx}
+
+        # topic matrix: (n_unique_ids, n_topics)
+        id_list   = list(id_to_row.keys())
+        row_list  = list(id_to_row.values())
+        topic_mat = topic_dist[row_list]          # (n_ids, n_topics)
+        tfidf_mat = X_tfidf[row_list]             # (n_ids, vocab) sparse
+        id_pos    = {nid: i for i, nid in enumerate(id_list)}
+
+        # Compute per-impression mean similarities
+        imp_topic_sim = {}
+        imp_tfidf_sim = {}
+
+        for _, row in imp_history.iterrows():
+            imp_id     = row["impression_id"]
+            hist_items = row["hist_items"]
+            if not hist_items:
                 continue
 
-            # Topic similarity (LDA topic vectors)
-            cand_topic  = topic_dist[cand_idx].reshape(1, -1)
-            hist_topics = np.vstack([_topic_or_zero(h) for h in hist_items])
-            sims = cosine_similarity(cand_topic, hist_topics)[0]
-            if sims.size:
-                topic_sim[i] = float(sims.mean())
+            # Get indices in our pre-built matrices
+            hist_pos = [id_pos[h] for h in hist_items if h in id_pos]
+            if not hist_pos:
+                continue
 
-            # TF-IDF similarity (sparse TF-IDF vectors)
-            # WHY: TF-IDF sim captures surface-level lexical overlap between
-            # candidate and history items; complementary to topic similarity.
-            cand_vec  = X_tfidf[cand_idx]
-            hist_rows = sparse.vstack([_tfidf_row_or_zero(h) for h in hist_items])
-            tsims = cosine_similarity(cand_vec, hist_rows)[0]
-            if tsims.size:
-                tfidf_sim[i] = float(tsims.mean())
+            hist_topic = topic_mat[hist_pos]          # (n_hist, n_topics)
+            hist_tfidf = tfidf_mat[hist_pos]          # (n_hist, vocab) sparse
 
-        out = out.drop(columns=["history"])
+            # Get candidates for this impression
+            imp_cands = df.loc[df["impression_id"] == imp_id, "candidate_id"]
+            cand_pos  = [id_pos[c] for c in imp_cands if c in id_pos]
+            if not cand_pos:
+                continue
+
+            cand_topic = topic_mat[cand_pos]          # (n_cands, n_topics)
+            cand_tfidf = tfidf_mat[cand_pos]          # (n_cands, vocab) sparse
+
+            # cosine_similarity: (n_cands, n_hist) -> mean over history axis
+            from sklearn.metrics.pairwise import cosine_similarity as _cos
+            ts = _cos(cand_topic, hist_topic).mean(axis=1)   # (n_cands,)
+            fs = _cos(cand_tfidf, hist_tfidf).mean(axis=1)   # (n_cands,)
+
+            for cand_id, t, f in zip(imp_cands[imp_cands.isin(id_pos)], ts, fs):
+                imp_topic_sim[(imp_id, cand_id)] = float(t)
+                imp_tfidf_sim[(imp_id, cand_id)] = float(f)
+
+        # Map back to full dataframe
+        keys = list(zip(df["impression_id"], df["candidate_id"]))
+        topic_sim = np.array([imp_topic_sim.get(k, 0.0) for k in keys])
+        tfidf_sim = np.array([imp_tfidf_sim.get(k, 0.0) for k in keys])
+
+        out = df[["impression_id", "candidate_id"]].copy()
         out["topic_entropy"]        = ent
         out["topic_max"]            = tmax
         out["cont_hist_topic_sim"]  = topic_sim
