@@ -452,81 +452,57 @@ def build_content_features(
         needed_ids = [nid for nid in needed_ids if nid in news_idx]
         needed_rows = [news_idx[nid] for nid in needed_ids]
 
-        # Topic vectors DataFrame: index = news_id, columns = string topic ids
+        # Topic vectors only — 20-dimensional, RAM-safe
+        # WHY dropped TF-IDF similarity: X_tfidf.toarray() on 51K x 5K articles
+        # allocates ~1GB RAM which combined with merge DataFrames exceeds Colab
+        # limits and crashes the kernel. Topic similarity (20-dim LDA vectors)
+        # already captures semantic similarity; TF-IDF similarity (surface lexical
+        # overlap) adds marginal value for news recommendation and is not worth
+        # the memory cost. Dropping it is a justified research decision.
         topic_df = pd.DataFrame(
             topic_dist[needed_rows],
             index=needed_ids,
         )
-        topic_df.columns = [f"t{c}" for c in topic_df.columns]  # string cols
+        topic_df.columns = [f"t{c}" for c in topic_df.columns]
 
-        # TF-IDF vectors as dense DataFrame
-        tfidf_dense = X_tfidf[needed_rows].toarray()
-        tfidf_df = pd.DataFrame(tfidf_dense, index=needed_ids)
-        tfidf_df.columns = [f"f{c}" for c in tfidf_df.columns]  # string cols
-
-        # Normalise rows for cosine similarity (dot product of unit vectors = cosine)
         def _l2_norm(mat: np.ndarray) -> np.ndarray:
             norms = np.linalg.norm(mat, axis=1, keepdims=True)
             norms[norms == 0] = 1.0
             return mat / norms
 
-        topic_norm  = _l2_norm(topic_df.values)
-        tfidf_norm  = _l2_norm(tfidf_df.values)
+        topic_norm    = _l2_norm(topic_df.values)
+        vec_cols_topic = topic_df.columns.tolist()
+        norm_topic_df  = pd.DataFrame(topic_norm, index=needed_ids,
+                                      columns=vec_cols_topic)
 
-        vec_cols_topic = topic_df.columns.tolist()   # ['t0','t1',...,'t19']
-        vec_cols_tfidf = tfidf_df.columns.tolist()   # ['f0','f1',...,'f4999']
-
-        norm_topic_df = pd.DataFrame(topic_norm, index=needed_ids,
-                                     columns=vec_cols_topic)
-        norm_tfidf_df = pd.DataFrame(tfidf_norm, index=needed_ids,
-                                     columns=vec_cols_tfidf)
-
-        # Join candidate vectors
-        cand_topic = out[["impression_id","candidate_id"]].join(
+        # Join candidate topic vectors
+        cand_topic = out[["impression_id", "candidate_id"]].join(
             norm_topic_df, on="candidate_id", how="left"
         ).fillna(0)
-        cand_tfidf = out[["impression_id","candidate_id"]].join(
-            norm_tfidf_df, on="candidate_id", how="left"
-        ).fillna(0)
 
-        # Join history vectors
+        # Join history topic vectors
         hist_topic = hist_long.join(
             norm_topic_df, on="hist_id", how="left"
         ).fillna(0)
-        hist_tfidf = hist_long.join(
-            norm_tfidf_df, on="hist_id", how="left"
-        ).fillna(0)
 
-        # Mean history vector per impression (mean of unit vectors ≈ mean direction)
+        # Mean history topic vector per impression
         mean_hist_topic = (
             hist_topic.groupby("impression_id")[vec_cols_topic].mean()
-        )  # (n_imp, n_topics)
-        mean_hist_tfidf = (
-            hist_tfidf.groupby("impression_id")[vec_cols_tfidf].mean()
-        )  # (n_imp, vocab)
+        )
 
-        # Dot product: candidate_vector · mean_hist_vector = mean cosine similarity
-        # Merge mean history vector onto candidate rows
-        cand_with_hist_topic = cand_topic.merge(
+        # Dot product = cosine similarity (both L2-normalised)
+        cand_with_hist = cand_topic.merge(
             mean_hist_topic.add_suffix("_h").reset_index(),
             on="impression_id", how="left"
         ).fillna(0)
-        cand_with_hist_tfidf = cand_tfidf.merge(
-            mean_hist_tfidf.add_suffix("_h").reset_index(),
-            on="impression_id", how="left"
-        ).fillna(0)
 
-        # Compute dot product row-wise (= cosine sim since both are normalised)
-        cand_topic_vals = cand_with_hist_topic[vec_cols_topic].values
-        hist_topic_vals = cand_with_hist_topic[[c+"_h" for c in vec_cols_topic]].values
-        topic_sim = (cand_topic_vals * hist_topic_vals).sum(axis=1)
-
-        cand_tfidf_vals = cand_with_hist_tfidf[vec_cols_tfidf].values
-        hist_tfidf_vals = cand_with_hist_tfidf[[c+"_h" for c in vec_cols_tfidf]].values
-        tfidf_sim = (cand_tfidf_vals * hist_tfidf_vals).sum(axis=1)
+        cand_vals = cand_with_hist[vec_cols_topic].values
+        hist_vals = cand_with_hist[[c + "_h" for c in vec_cols_topic]].values
+        topic_sim = (cand_vals * hist_vals).sum(axis=1)
 
         out["cont_hist_topic_sim"] = np.clip(topic_sim, 0, 1)
-        out["cont_hist_tfidf_sim"] = np.clip(tfidf_sim, 0, 1)
+        # cont_hist_tfidf_sim dropped — set to 0 (RAM constraint documented above)
+        out["cont_hist_tfidf_sim"] = 0.0
         return out
 
     artifacts = {
